@@ -123,26 +123,118 @@
     }
 
   };
-
+  
+  // Dependency tracking
+  
+  Backbone.Tracker = {
+    
+    tracking: false,
+    
+    layers: [],
+    
+    dependencies: null,
+    
+    startTracking: function() {
+      this.tracking = true;
+      this.dependencies = [];
+      this.layers.push(this.dependencies);  
+    },
+    
+    track: function(obj, attr) {
+      var event = attr ? 'change:' + attr : 'change';
+      this.dependencies.push({obj: obj, event: event});  
+    },
+    
+    stopTracking: function() {
+      var finished_dependencies = _.uniq(this.layers.pop());
+      if (this.layers.length === 0) this.tracking = false;
+      this.dependencies = _(this.layers).last();
+      return finished_dependencies;  
+    }
+  };
+  
+  // Backbone.Dependent
+  // ------------------
+  
+  // Create a new Dependent (used internally within Model)
+  Backbone.Dependent = function(fn, context, attr) {
+    this._fn = fn;
+    this._context = context;
+    this._attr = attr;
+    this._currentValue = undefined;
+    this._currentDependencies = [];
+  };
+  
+  _.extend(Backbone.Dependent.prototype, Backbone.Events, {
+    
+    get: function() {
+      if (Backbone.Tracker.tracking) Backbone.Tracker.track(this);
+      return this._currentValue;
+    },
+    
+    update: function() {
+      var boundDependencies, trackedDependencies;
+      
+      boundDependencies = this._currentDependencies;
+      Backbone.Tracker.startTracking(); // Start tracking which bases, collections, and dependents this dependent depends on
+      this._currentValue = this._fn.call(this._context); // Run the function
+      this._currentDependencies = trackedDependencies = Backbone.Tracker.stopTracking();  // Stop tracking
+      
+      // TODO: Make this configurable (so you can turn off live dependecy tracking)
+      //      That would increase the speed of dependents (esp. for mobile)
+      
+      var unbindFrom = _(boundDependencies).select(function(dependent) {   // Find expired dependencies
+        return !_(trackedDependencies).detect(function(tracked) {
+          return dependent.obj === tracked.obj && dependent.attr === tracked.attr;
+        });
+      });
+      
+      var bindTo = _(trackedDependencies).select(function(dependent) {   // Find new dependencies
+        return !_(boundDependencies).detect(function(tracked) {
+          return dependent.obj === tracked.obj && dependent.attr === tracked.attr;
+        });
+      });
+      
+      _(unbindFrom).each(function(dependent) {   // Unbind expired dependencies
+        dependent.obj.unbind(dependent.event, this.update);
+      }, this);
+    
+      _(bindTo).each(function(dependent) {   // Bind new dependencies
+        dependent.obj.bind(dependent.event, this.update, this);
+      }, this);
+      
+      this._context.trigger('change:' + this._attr, this, this._currentValue); // Publish an update for subscribers
+    }
+    
+  });
+  
   // Backbone.Model
   // --------------
 
   // Create a new model, with defined attributes. A client id (`cid`)
   // is automatically generated and assigned for you.
   Backbone.Model = function(attributes, options) {
-    var defaults;
+    var defaults, dependents = {};
     attributes || (attributes = {});
     if (defaults = this.defaults) {
       if (_.isFunction(defaults)) defaults = defaults.call(this);
       attributes = _.extend({}, defaults, attributes);
     }
+    _(this.dependents).each(function(fn, name, list) {
+      dependents[name] = new Backbone.Dependent(fn, this, name);
+    }, this);
     this.attributes = {};
+    this.dependents = dependents;
     this._escapedAttributes = {};
     this.cid = _.uniqueId('c');
-    this.set(attributes, {silent : true});
+    // TODO: Ask jashkenas why this was silent (don't want to break anything)
+    this.set(attributes, {silent : false}); // Necessary for dependents to work. Why is this false by default?
     this._changed = false;
     this._previousAttributes = _.clone(this.attributes);
     if (options && options.collection) this.collection = options.collection;
+    _(this.dependents).each(function(dependent) {
+      dependent.update();
+    });
     this.initialize(attributes, options);
   };
 
@@ -163,14 +255,22 @@
     // Initialize is an empty function by default. Override it with your own
     // initialization logic.
     initialize : function(){},
+    
+    // Dependents is empty by default. Override it with an object containing dependent functions
+    attributes: {},
+    dependents: {},
 
     // Return a copy of the model's `attributes` object.
     toJSON : function() {
       return _.clone(this.attributes);
     },
 
-    // Get the value of an attribute.
+    // Get the value of an attribute or dependent.
     get : function(attr) {
+      if (Backbone.Tracker.tracking) Backbone.Tracker.track(this, attr);
+      if (this.dependents.hasOwnProperty(attr)) {
+        return this.dependents[attr].get();
+      }
       return this.attributes[attr];
     },
 
