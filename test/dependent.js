@@ -93,5 +93,29 @@ $(document).ready(function() {
     strictEqual(counter, 3, 'counter should still be 3 after updating expired dependencies.');
     strictEqual(test.get('dynamic'), 3, 'third dependency should be c');
   });
+  
+  test("dependents work across different Models and model instances", function() {
+    var base = new Backbone.Model({
+      val: 1
+    });
+    var PlusModel = Backbone.Model.extend({
+      defaults: {
+        delta: 1
+      },
+      dependents: {
+        val: function() {
+          var ref = this.get('reference'),
+              delta = this.get('delta');
+          if (typeof(ref) === 'undefined') return -1;
+          return ref.get('val') + delta;
+        }
+      }
+    });
+    var a = new PlusModel({ reference: base });
+    var b = new PlusModel({ reference: a, delta: 10 });
+    strictEqual(base.get('val'), 1, 'base value should be 1.');
+    strictEqual(a.get('val'), 2, 'value of "a" should be 2.');
+    strictEqual(b.get('val'), 12, 'value of "b" should be 12.');
+  });
 
 });
