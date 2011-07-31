@@ -126,6 +126,24 @@
   
   // Dependency tracking
   
+  function Dependency(object, event) {
+    var existing = _(Dependency.all).detect(function(dep) {
+      return (dep.object === object && dep.event === event);
+    });
+    if (existing) return existing;
+    this.object = object;
+    this.event = event;
+    Dependency.all.push(this);
+  }
+  
+  _(Dependency.prototype).extend({
+    equals: function(other) {
+      return this.object === other.object && this.event === other.event;
+    }
+  });
+
+  Dependency.all = [];
+  
   Backbone.Tracker = {
     
     tracking: false,
@@ -141,6 +159,7 @@
     },
     
     track: function(obj, attr) {
+      if (!this.tracking) return;
       var event = attr ? 'change:' + attr : 'change';
       this.dependencies.push({obj: obj, event: event});  
     },
@@ -157,10 +176,11 @@
   // ------------------
   
   // Create a new Dependent (used internally within Model)
-  Backbone.Dependent = function(fn, context, attr) {
+  Backbone.Dependent = function(fn, model, attr) {
     this._fn = fn;
-    this._context = context;
+    this._model = model;
     this._attr = attr;
+    this._event = 'change:' + attr;
     this._currentValue = undefined;
     this._currentDependencies = [];
   };
@@ -168,7 +188,7 @@
   _.extend(Backbone.Dependent.prototype, Backbone.Events, {
     
     get: function() {
-      if (Backbone.Tracker.tracking) Backbone.Tracker.track(this);
+      Backbone.Tracker.track(this._model, this._attr);
       return this._currentValue;
     },
     
@@ -177,11 +197,17 @@
       
       boundDependencies = this._currentDependencies;
       Backbone.Tracker.startTracking(); // Start tracking which bases, collections, and dependents this dependent depends on
-      this._currentValue = this._fn.call(this._context); // Run the function
+      this._currentValue = this._fn.call(this._model); // Run the function
       this._currentDependencies = trackedDependencies = Backbone.Tracker.stopTracking();  // Stop tracking
       
       // TODO: Make this configurable (so you can turn off live dependecy tracking)
       //      That would increase the speed of dependents (esp. for mobile)
+      
+      console.log("bound dependencies:");
+      console.dir(boundDependencies);
+      
+      console.log("current dependencies:");
+      console.dir(trackedDependencies);
       
       var unbindFrom = _(boundDependencies).select(function(dependent) {   // Find expired dependencies
         return !_(trackedDependencies).detect(function(tracked) {
@@ -195,6 +221,9 @@
         });
       });
       
+      _(unbindFrom).each(function(ub) { console.log("Unbinding from " + ub.obj + ", " + ub.event); });
+      _(bindTo).each(function(ub) { console.log("Binding to " + ub.obj + ", " + ub.event); });
+      
       _(unbindFrom).each(function(dependent) {   // Unbind expired dependencies
         dependent.obj.unbind(dependent.event, this.update);
       }, this);
@@ -203,7 +232,7 @@
         dependent.obj.bind(dependent.event, this.update, this);
       }, this);
       
-      this._context.trigger('change:' + this._attr, this, this._currentValue); // Publish an update for subscribers
+      this._model.trigger(this._event, this, this._currentValue); // Publish an update for subscribers
     }
     
   });
@@ -267,7 +296,7 @@
 
     // Get the value of an attribute or dependent.
     get : function(attr) {
-      if (Backbone.Tracker.tracking) Backbone.Tracker.track(this, attr);
+      Backbone.Tracker.track(this, attr);
       if (this.dependents.hasOwnProperty(attr)) {
         return this.dependents[attr].get();
       }

@@ -1,6 +1,6 @@
 $(document).ready(function() {
 
-  module("Backbone.Dependents");
+  module("Backbone.Dependent");
 
   var UserModel = Backbone.Model.extend({
     defaults: {
@@ -20,7 +20,7 @@ $(document).ready(function() {
     }
   });
   
-  test("Dependents: bind and trigger from normal attributes", function() {
+  test("can bind and trigger from normal attributes", function() {
     var user, full_name;
     user = new UserModel({
       first_name: 'Hunter',
@@ -31,13 +31,13 @@ $(document).ready(function() {
     }, user);
     full_name = user.get('full_name');
     strictEqual(full_name, 'Hunter Loftis', 'full_name should start as Hunter Loftis.');
-    user.set({ first_name: 'Chris' });
-    strictEqual(full_name, 'Chris Loftis', 'full_name should update to Chris Loftis when first_name changes.');
-    user.set({ last_name: 'Gomez' });
-    strictEqual(full_name, 'Chris Gomez', 'full_name should update to Chris Gomez when first_name changes.');
+    user.set({ first_name: 'Amy' });
+    strictEqual(full_name, 'Amy Loftis', 'full_name should update to Amy Loftis when first_name changes.');
+    user.set({ last_name: 'Lynn' });
+    strictEqual(full_name, 'Amy Lynn', 'full_name should update to Amy Lynn when last_name changes.');
   });
 
-  test("Dependents: bind and trigger from other dependents", function() {
+  test("can bind and trigger from other dependents", function() {
     var user, name_length;
     user = new UserModel({
       first_name: 'Hunter',
@@ -48,11 +48,50 @@ $(document).ready(function() {
     }, user);
     name_length = user.get('name_length');
     strictEqual(name_length, 13, 'name_length should start at 13.');
-    user.set({ first_name: 'Chris' });
-    strictEqual(name_length, 12, 'name_length should update to 12.');
-    user.set({ last_name: 'Gomez' });
-    strictEqual(name_length, 11, 'name_length should update to 11.');
-    
+    user.set({ first_name: 'Amy' });
+    strictEqual(name_length, 10, 'name_length should update to 10.');
+    user.set({ last_name: 'Lynn' });
+    strictEqual(name_length, 8, 'name_length should update to 8.');
+  });
+  
+  test("dynamically tracks dependencies", function() {
+    var counter = 0;
+    var TestModel = Backbone.Model.extend({
+      defaults: {
+        a: 1,
+        b: 2,
+        c: 3,
+        active: 0
+      },
+      dependents: {
+        dynamic: function() {
+          counter++;
+          var active = this.get('active');
+          var map = ['a', 'b', 'c'];
+          var depends_on = this.get(map[active]);
+          return depends_on;
+        }
+      }
+    });
+    strictEqual(counter, 0, 'counter should start at 0.');
+    var test = new TestModel();
+    strictEqual(counter, 1, 'counter should be 1 after model instance is created.')
+    strictEqual(test.get('dynamic'), 1, 'first dependency should be a');
+    strictEqual(counter, 1, 'counter should still be 1 after get() since result is the same.');  // It should cache the last computed result in _currentResult
+    test.set({ b: 10, c: 10 });
+    strictEqual(counter, 1, 'counter should still be 1 after unrelated attributes are set.');
+    test.set({ b: 2, c: 3 });
+    test.set({ active: 1 });
+    strictEqual(counter, 2, 'counter should be 2 after "active" is updated.');
+    test.set({ active: 1 });
+    strictEqual(counter, 2, 'counter should still be 2 after duplicate set() to "active."');
+    strictEqual(test.get('dynamic'), 2, 'second dependency should b b');
+    test.set({ active: 2 });
+    strictEqual(counter, 3, 'counter should be 3 after third update.');
+    test.set({ a: 10, b: 10 });
+    test.set({ a: 20, b: 20 });
+    strictEqual(counter, 3, 'counter should still be 3 after updating expired dependencies.');
+    strictEqual(test.get('dynamic'), 3, 'third dependency should be c');
   });
 
 });
