@@ -150,22 +150,23 @@
     
     layers: [],
     
-    dependencies: null,
+    dependencies: undefined,
     
     startTracking: function() {
       this.tracking = true;
-      this.dependencies = [];
+      this.dependencies = {};
       this.layers.push(this.dependencies);  
     },
     
     track: function(obj, attr) {
       if (!this.tracking) return;
-      var event = attr ? 'change:' + attr : 'change';
-      this.dependencies.push({obj: obj, event: event});  
+      var id = obj.tracker + attr;
+      var event = 'change:' + attr;
+      this.dependencies[id] = {obj: obj, event: event};  
     },
     
     stopTracking: function() {
-      var finished_dependencies = _.uniq(this.layers.pop());
+      var finished_dependencies = this.layers.pop();
       if (this.layers.length === 0) this.tracking = false;
       this.dependencies = _(this.layers).last();
       return finished_dependencies;  
@@ -182,7 +183,7 @@
     this._attr = attr;
     this._event = 'change:' + attr;
     this._currentValue = undefined;
-    this._currentDependencies = [];
+    this._currentDependencies = {};
   };
   
   _.extend(Backbone.Dependent.prototype, Backbone.Events, {
@@ -196,43 +197,30 @@
       var boundDependencies, trackedDependencies;
       
       boundDependencies = this._currentDependencies;
-      Backbone.Tracker.startTracking(); // Start tracking which bases, collections, and dependents this dependent depends on
-      this._currentValue = this._fn.call(this._model); // Run the function
-      this._currentDependencies = trackedDependencies = Backbone.Tracker.stopTracking();  // Stop tracking
+      
+      // Run the Dependent function inside dependency tracking to see which attributes it needs
+      Backbone.Tracker.startTracking();
+      this._currentValue = this._fn.call(this._model);
+      this._currentDependencies = trackedDependencies = Backbone.Tracker.stopTracking();
       
       // TODO: Make this configurable (so you can turn off live dependecy tracking)
       //      That would increase the speed of dependents (esp. for mobile)
       
-      console.log("bound dependencies:");
-      console.dir(boundDependencies);
-      
-      console.log("current dependencies:");
-      console.dir(trackedDependencies);
-      
-      var unbindFrom = _(boundDependencies).select(function(dependent) {   // Find expired dependencies
-        return !_(trackedDependencies).detect(function(tracked) {
-          return dependent.obj === tracked.obj && dependent.attr === tracked.attr;
-        });
-      });
-      
-      var bindTo = _(trackedDependencies).select(function(dependent) {   // Find new dependencies
-        return !_(boundDependencies).detect(function(tracked) {
-          return dependent.obj === tracked.obj && dependent.attr === tracked.attr;
-        });
-      });
-      
-      _(unbindFrom).each(function(ub) { console.log("Unbinding from " + ub.obj + ", " + ub.event); });
-      _(bindTo).each(function(ub) { console.log("Binding to " + ub.obj + ", " + ub.event); });
-      
-      _(unbindFrom).each(function(dependent) {   // Unbind expired dependencies
+      var expiredDependencies = _.difference(boundDependencies, trackedDependencies);
+      var newDependencies = _.difference(trackedDependencies, boundDependencies);
+            
+      // Unbind expired dependencies
+      _(expiredDependencies).each(function(dependent) {
         dependent.obj.unbind(dependent.event, this.update);
       }, this);
     
-      _(bindTo).each(function(dependent) {   // Bind new dependencies
+      // Bind new dependencies
+      _(newDependencies).each(function(dependent) { 
         dependent.obj.bind(dependent.event, this.update, this);
       }, this);
       
-      this._model.trigger(this._event, this, this._currentValue); // Publish an update for subscribers
+      // Publish an update for subscribers
+      this._model.trigger(this._event, this, this._currentValue);
     }
     
   });
@@ -253,11 +241,11 @@
       dependents[name] = new Backbone.Dependent(fn, this, name);
     }, this);
     this.attributes = {};
+    this.tracker = _.uniqueId();
     this.dependents = dependents;
     this._escapedAttributes = {};
     this.cid = _.uniqueId('c');
-    // TODO: Ask jashkenas why this was silent (don't want to break anything)
-    this.set(attributes, {silent : false}); // Necessary for dependents to work. Why is this false by default?
+    this.set(attributes, {silent : false});
     this._changed = false;
     this._previousAttributes = _.clone(this.attributes);
     if (options && options.collection) this.collection = options.collection;
